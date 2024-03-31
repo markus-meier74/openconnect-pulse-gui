@@ -21,9 +21,9 @@ try:
 except ImportError:
     from urlparse import urlparse, urlunparse
 
-gi.require_version("Gtk", "3.0")
-gi.require_version("WebKit2", "4.1")
-from gi.repository import Gtk, WebKit2, GLib
+gi.require_version("Gtk", "4.0")
+gi.require_version("WebKit", "6.0")
+from gi.repository import GLib, Gio, Gtk, WebKit
 
 log = logging.getLogger("pulsegui")
 
@@ -38,50 +38,44 @@ class PulseLoginView:
         verify=True,
         session_cookie_name="DSID",
     ):
-        self._window = Gtk.Window().new(Gtk.WindowType.TOPLEVEL)
+        # self._window = Gtk.Window().new(Gtk.WindowType.TOPLEVEL)
+        self._window = Gtk.Window().new()
 
         # API reference: https://lazka.github.io/pgi-docs/#WebKit2-4.1
 
         uri_obj = urlparse(uri)._replace(scheme="https")
         uri = urlunparse(uri_obj)
 
-        self.closed = False
         self.user_closed = False
         self.success = False
         self.verbose = verbose
         self.auth_cookie = None
         self._session_cookie_name = session_cookie_name
-
-        self._ctx = WebKit2.WebContext.get_default()
-        self._WebSiteDataManager = self._ctx.get_website_data_manager()
-        # self._WebSiteDataManager.set_persistent_credential_storage_enabled(True) 
-        log.debug(f"Persistent credential storage enabled: {self._WebSiteDataManager.get_persistent_credential_storage_enabled()}")
-        log.debug(f"WebSiteDataManager is ephemeral: {self._WebSiteDataManager.props.is_ephemeral}")
+        self._networkSession = WebKit.NetworkSession.get_default()
+        log.debug(f"Persistent credential storage enabled: {self._networkSession.get_persistent_credential_storage_enabled()}")
         if not verify:
-            self._ctx.set_tls_errors_policy(WebKit2.TLSErrorsPolicy.IGNORE)
+            self._networkSession.set_tls_errors_policy(WebKit.TLSErrorsPolicy.IGNORE)
 
-        self._cookies = self._ctx.get_cookie_manager()
-        self._cookies.set_accept_policy(WebKit2.CookieAcceptPolicy.ALWAYS)
+        self._cookies = self._networkSession.get_cookie_manager()
+        self._cookies.set_accept_policy(WebKit.CookieAcceptPolicy.ALWAYS)
         if cookies:
             log.info("Saving cookies to %s", cookies)
             self._cookies.set_persistent_storage(
-                cookies, WebKit2.CookiePersistentStorage.SQLITE
+                cookies, WebKit.CookiePersistentStorage.SQLITE
             )
 
-        self._webview = WebKit2.WebView()
+        self._webview = WebKit.WebView()
         self._webview.connect("load-failed-with-tls-errors", self._tls_error, None)
-
-        self._window.add(self._webview)
-        self._window.set_title("Pulse Connect Login")
-        self._window.connect("delete-event", self._user_close)
-        self._window.connect("destroy", self._close)
         self._webview.connect("resource-load-started", self._log_request)
+        self._window.set_child(self._webview)
+        self._window.set_title("Pulse Connect Login")
+        self._window.connect("close-request", self._user_close)
         self._cookies.connect("changed", self._cookie_changed)
-        
-        # self._wvSettings=self._webview.get_settings()
-        # log.debug(f"Private browsing enabled: {self._wvSettings.get_enable_private_browsing()}")
 
-        self._window.show_all()
+        self._WebSiteDataManager = self._networkSession.get_website_data_manager()
+        log.debug(f"WebSiteDataManager is ephemeral: {self._WebSiteDataManager.props.is_ephemeral}")
+        
+        self._window.present()
         self._setWindowSize(1300, 600)
 
         self._request_id = 0
@@ -90,15 +84,15 @@ class PulseLoginView:
             self._webview.load_html(html, uri)
         else:
             self._webview.load_uri(uri)
-            
+        
     def _getCurrentMonitorGeometry(self):
         'Return the geometry of the monitor on which self._window is shown.'
         display=self._window.get_display()
-        GdkWindow=self._window.get_window()
-        if GdkWindow is None: # The window is not realized, yet
-            currentMonitor=display.get_monitor(0) # Just pick the first available monitor
+        surface=self._window.get_surface()
+        if surface is None: # The window is not realized, yet
+            currentMonitor=display.get_monitors()[0] # Just pick the first available monitor
         else:
-            currentMonitor=display.get_monitor_at_window(self._window.get_window())
+            currentMonitor=display.get_monitor_at_surface(surface)
         return currentMonitor.get_geometry()
     
     def _setWindowSize(self, width, height):
@@ -111,18 +105,15 @@ class PulseLoginView:
             width = currentMonitorGeometry.width
         if height > currentMonitorGeometry.height:
            height = currentMonitorGeometry.height
-        self._window.resize(width, height)
+        self._window.set_default_size(width, height)
 
     def _user_close(self, *args, **kwargs):
         self.user_closed = True
         self._close()
 
     def _close(self, *args, **kwargs):
-        if not self.closed:
-            self.closed = True
-            log.info("closing GTK")
-            # time.sleep(.1)
-            Gtk.main_quit()
+        log.info("closing GTK")
+        self._window.close()
 
     def _log_request(self, webview, resource, request):
         request_id = self._request_id
@@ -293,7 +284,7 @@ def do_openconnect(server, authcookie, run_openconnect=False):
         return ret
 
 
-def saml_thread(jobQ, returnQ, closeEvent):
+def saml_thread(jobQ, returnQ, closeEvent, mainContext):
     while not closeEvent.is_set():
         try:
             job = jobQ.get(block=False)
@@ -307,7 +298,9 @@ def saml_thread(jobQ, returnQ, closeEvent):
             verify=not job.insecure,
             session_cookie_name=job.session_cookie_name,
         )
-        Gtk.main()
+        
+        while Gio.ListModel.get_n_items(Gtk.Window.get_toplevels()) > 0:
+            mainContext.iteration(True)
         if slv.user_closed:
             returnQ.put({"error": "Login window closed by user", "retry": False})
         elif not slv.success:
@@ -340,20 +333,25 @@ def main(prog=None):
         run_openconnect = False
         exit(0)
 
+    mainContext=GLib.MainContext.new()
+    mainLoop=GLib.MainLoop.new(mainContext, False)
+    mainThread=threading.Thread(target=mainLoop.run, args=())
+    mainThread.start()
+
     # Create a thread for GTK handling
     # This allows us to do things in the main python thread (e.g. catch SIGINT)
 
     # closeEvent signals to Gtk thread that it should immediately stop
-    # when closeEvent is used, the main python thread calls Gtk.main_quit()
+    # when closeEvent is used, the main python thread calls Gtk.MainLoop.quit()
 
     jobQ = queue.Queue()
     returnQ = queue.Queue()
     closeEvent = threading.Event()
 
-    webkitthread = threading.Thread(
-        target=saml_thread, args=(jobQ, returnQ, closeEvent)
+    webkitThread = threading.Thread(
+        target=saml_thread, args=(jobQ, returnQ, closeEvent, mainContext)
     )
-    webkitthread.start()
+    webkitThread.start()
 
     errCount = 1
     errMaxCount = 3
@@ -383,7 +381,7 @@ def main(prog=None):
 
         except KeyboardInterrupt:
             log.warning("User exited")
-            Gtk.main_quit()
+            mainLoop.quit()
             break
         else:
             if errCount > errMaxCount:
@@ -394,7 +392,7 @@ def main(prog=None):
             time.sleep(1)
 
     closeEvent.set()
-    webkitthread.join()
+    webkitThread.join()
 
 
 if __name__ == "__main__":
