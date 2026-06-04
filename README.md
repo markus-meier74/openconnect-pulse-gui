@@ -26,7 +26,7 @@ Instruction for specific distros can be found below.
 
 ### openSUSE
 
-    sudo zypper in python3-gobject webkit2gtk3-devel openconnect
+    sudo zypper in python3-gobject typelib-1_0-WebKit2-4_1 openconnect
 
 ### Gentoo
 
