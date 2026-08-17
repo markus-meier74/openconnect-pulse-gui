@@ -85,10 +85,7 @@ Here is an example Bash script:
 
 ### DNS servers not updated
 
-If you are using NetworkManager, you may find that `openconnect-pulse-gui` fails to update the DNS servers in `/etc/resolv.conf`.  This may be because your distribution has configured NetworkManager to enforce a policy that all changes to `/etc/resolv.conf` must go through NetworkManager itself.  There are two possible workarounds to this:
-
-* You can switch from NetworkManager to another network configuration framework, such as the traditional `ifup` family of scripts or [Wicked](https://en.opensuse.org/Portal:Wicked).
-* If you want to continue using NetworkManager, find the `NETCONFIG_DNS_POLICY` setting in `/etc/sysconfig/network/config` and change it to the following: `NETCONFIG_DNS_POLICY='STATIC_FALLBACK * NetworkManager'`
+If you are using NetworkManager, you may find that `openconnect-pulse-gui` fails to update the DNS servers in `/etc/resolv.conf`.  This may be because your distribution has configured NetworkManager to enforce a policy that all changes to `/etc/resolv.conf` must go through NetworkManager itself.  In this case, you can force `/etc/resolv.conf` to update by running `sudo netconfig update -f`.  To avoid having to do this each time you run `openconnect-pulse-gui`, you could find the `NETCONFIG_DNS_POLICY` setting in `/etc/sysconfig/network/config` and change it to the following: `NETCONFIG_DNS_POLICY='STATIC_FALLBACK * NetworkManager'`.  (Alternatively, you could switch from NetworkManager to another network configuration framework, such as the traditional `ifup` family of scripts or [Wicked](https://en.opensuse.org/Portal:Wicked).)
 
 ## Login process
 
