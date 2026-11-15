@@ -54,7 +54,7 @@ class PulseLoginView:
 
         self._ctx = WebKit2.WebContext.get_default()
         self._WebSiteDataManager = self._ctx.get_website_data_manager()
-        # self._WebSiteDataManager.set_persistent_credential_storage_enabled(True) 
+        self._WebSiteDataManager.set_persistent_credential_storage_enabled(True)
         log.debug(f"Persistent credential storage enabled: {self._WebSiteDataManager.get_persistent_credential_storage_enabled()}")
         log.debug(f"WebSiteDataManager is ephemeral: {self._WebSiteDataManager.props.is_ephemeral}")
         if not verify:
@@ -223,6 +223,11 @@ def parse_args(args=None, prog=None):
         "--insecure", action="store_true", help="Ignore invalid server certificate",
     )
     p.add_argument(
+        "--foreground",
+        action="store_true",
+        help="Run openconnect in the foreground (default: daemonize in the background)",
+    )
+    p.add_argument(
         "--session-cookie-name",
         default="DSID",
         help=argparse.SUPPRESS,  # "Name of the session cookie (default: %(default)s)"
@@ -272,7 +277,7 @@ def parse_args(args=None, prog=None):
     return p, args
 
 
-def do_openconnect(server, authcookie, run_openconnect=False):
+def do_openconnect(server, authcookie, run_openconnect=False, background=True):
     cmd = [
         "sudo",
         "openconnect",
@@ -280,8 +285,10 @@ def do_openconnect(server, authcookie, run_openconnect=False):
         "nc",
         "-C",
         f'{authcookie.get_name()}={authcookie.get_value()}',
-        server,
     ]
+    if background:
+        cmd += ["--background", "--syslog"]
+    cmd.append(server)
     if not run_openconnect:
         print(" ".join(cmd))
         return None
@@ -370,7 +377,8 @@ def main(prog=None):
 
             # extract response and convert to OpenConnect command-line
             exit_code = do_openconnect(
-                args.server, ret["auth_cookie"], run_openconnect=run_openconnect
+                args.server, ret["auth_cookie"], run_openconnect=run_openconnect,
+                background=not args.foreground,
             )
 
             # Exit codes from openconnect/main.c
